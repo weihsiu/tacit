@@ -185,9 +185,8 @@ class ScalaExecutorSuite extends munit.FunSuite:
 
   // TODO: try to enable this test after https://github.com/scala/scala3/pull/25789
   // test(":type returns type information"):
-  //   val manager = new SessionManager
-  //   val sid = manager.createSession()
-  //   manager.executeInSession(sid, "val x = 42")
-  //   val result = manager.executeInSession(sid, ":type x")
+  //   val session = ReplSession.create
+  //   session.execute("val x = 42")
+  //   val result = session.execute(":type x")
   //   assert(result.success, s"':type x' should succeed, got error: ${result.error}")
   //   assert(result.output.contains("Int"), s"':type x' should mention Int, got: ${result.output}")

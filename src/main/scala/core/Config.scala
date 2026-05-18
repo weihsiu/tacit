@@ -9,7 +9,6 @@ import scopt.OParser
 case class Config(
   recordPath: Option[String] = None,
   quiet: Boolean = false,
-  sessionEnabled: Boolean = true,
   safeMode: Boolean = true,
   libraryJarPath: String = Option(System.getProperty("tacit.library.jar")).getOrElse(""),
   libraryConfig: Json = Json.obj(),
@@ -25,7 +24,6 @@ case class Config(
 private case class FileConfig(
   recordPath: Option[String] = None,
   quiet: Option[Boolean] = None,
-  sessionEnabled: Option[Boolean] = None,
   safeMode: Option[Boolean] = None,
   libraryJarPath: Option[String] = None,
   libraryConfig: Option[Json] = None,
@@ -54,7 +52,6 @@ object Config:
     base.copy(
       recordPath = fc.recordPath.orElse(base.recordPath),
       quiet = fc.quiet.getOrElse(base.quiet),
-      sessionEnabled = fc.sessionEnabled.getOrElse(base.sessionEnabled),
       safeMode = fc.safeMode.getOrElse(base.safeMode),
       libraryJarPath = fc.libraryJarPath.getOrElse(base.libraryJarPath),
       libraryConfig = fc.libraryConfig.getOrElse(Json.obj()).deepMerge(base.libraryConfig),
@@ -101,9 +98,6 @@ object Config:
       opt[Unit]('q', "quiet")
         .action((_, c) => c.copy(quiet = true))
         .text("Suppress startup banner and request/response logging."),
-      opt[Unit]("no-session")
-        .action((_, c) => c.copy(sessionEnabled = false))
-        .text("Disable session-related tools (create/execute/delete/list sessions)."),
       opt[Unit]("safe-mode")
         .action((_, c) => c.copy(safeMode = true))
         .text("Enable Scala `language.experimental.safe` in the REPL for every execution (default: on)."),

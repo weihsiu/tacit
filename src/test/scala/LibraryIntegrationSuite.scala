@@ -1,4 +1,4 @@
-import tacit.executor.{ScalaExecutor, SessionManager}
+import tacit.executor.{ReplSession, ScalaExecutor}
 import tacit.core.{Context, Config}
 import java.nio.file.Files
 
@@ -74,16 +74,13 @@ class LibraryIntegrationSuite extends munit.FunSuite:
     assert(result.output.contains("find me here"), s"unexpected output: ${result.output}")
 
   test("library available in session"):
-    val manager = new SessionManager
-    val sessionId = manager.createSession()
+    val session = ReplSession.create
 
-    val r1 = manager.executeInSession(sessionId, """
+    val r1 = session.execute("""
       requestFileSystem("/tmp") { access("/tmp").exists }
     """)
     assert(r1.success, s"session execution failed: ${r1.error}")
     assert(r1.output.contains("true"), s"unexpected output: ${r1.output}")
-
-    manager.deleteSession(sessionId)
 
   test("calling foreach(println) on the result of grepRecursive"):
     val result = ScalaExecutor.execute("""
@@ -175,18 +172,15 @@ class LibraryIntegrationSuite extends munit.FunSuite:
     )
 
   test("session preserves state across library calls"):
-    val manager = new SessionManager
-    val sessionId = manager.createSession()
+    val session = ReplSession.create
 
-    manager.executeInSession(sessionId, """
+    session.execute("""
       val testResult = requestFileSystem("/tmp") { access("/tmp").isDirectory }
     """)
 
-    val r2 = manager.executeInSession(sessionId, "testResult")
+    val r2 = session.execute("testResult")
     assert(r2.success)
     assert(r2.output.contains("true"), s"unexpected output: ${r2.output}")
-
-    manager.deleteSession(sessionId)
 
   // ── Classified path bypass tests ──
 
