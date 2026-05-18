@@ -6,12 +6,34 @@ import io.circe.parser.decode
 import io.circe.syntax.*
 import scopt.OParser
 
+enum AgentdojoDomain:
+  case Workspace
+
+object AgentdojoDomain:
+  val choices: String = values.map(_.toString.toLowerCase).mkString(", ")
+
+  def fromString(s: String): Option[AgentdojoDomain] =
+    values.find(_.toString.equalsIgnoreCase(s))
+
+  given Decoder[AgentdojoDomain] = Decoder.decodeString.emap(s =>
+    fromString(s).toRight(s"Invalid agentdojo domain: '$s'. Must be one of: $choices")
+  )
+
+  given scopt.Read[AgentdojoDomain] = scopt.Read.reads(s =>
+    fromString(s).getOrElse(
+      throw IllegalArgumentException(s"Invalid agentdojo domain: '$s'. Must be one of: $choices")
+    )
+  )
+
 case class Config(
   recordPath: Option[String] = None,
   quiet: Boolean = false,
   safeMode: Boolean = true,
   libraryJarPath: String = Option(System.getProperty("tacit.library.jar")).getOrElse(""),
   libraryConfig: Json = Json.obj(),
+  agentdojoPort: Option[Int] = None,
+  agentdojoDomain: Option[AgentdojoDomain] = None,
+  agentdojoSecureChannel: Option[String] = None,
 ):
   def withLibrary(key: String, value: Json): Config =
     copy(libraryConfig = libraryConfig.deepMerge(Json.obj(key -> value)))
@@ -27,6 +49,9 @@ private case class FileConfig(
   safeMode: Option[Boolean] = None,
   libraryJarPath: Option[String] = None,
   libraryConfig: Option[Json] = None,
+  agentdojoPort: Option[Int] = None,
+  agentdojoDomain: Option[AgentdojoDomain] = None,
+  agentdojoSecureChannel: Option[String] = None,
 ) derives Decoder
 
 object Config:
@@ -55,6 +80,9 @@ object Config:
       safeMode = fc.safeMode.getOrElse(base.safeMode),
       libraryJarPath = fc.libraryJarPath.getOrElse(base.libraryJarPath),
       libraryConfig = fc.libraryConfig.getOrElse(Json.obj()).deepMerge(base.libraryConfig),
+      agentdojoPort = base.agentdojoPort.orElse(fc.agentdojoPort),
+      agentdojoDomain = base.agentdojoDomain.orElse(fc.agentdojoDomain),
+      agentdojoSecureChannel = base.agentdojoSecureChannel.orElse(fc.agentdojoSecureChannel),
     )
 
   private def validateLlmConfig(config: Config): Config =
@@ -119,6 +147,15 @@ object Config:
       opt[String]("llm-model")
         .action((x, c) => c.withLlm("model", x))
         .text("LLM model name."),
+      opt[Int]("agentdojo-port")
+        .action((x, c) => c.copy(agentdojoPort = Some(x)))
+        .text("Port for the AgentDojo MCP server."),
+      opt[AgentdojoDomain]("agentdojo-domain")
+        .action((x, c) => c.copy(agentdojoDomain = Some(x)))
+        .text(s"AgentDojo domain (${AgentdojoDomain.choices})."),
+      opt[String]("agentdojo-secure-channel")
+        .action((x, c) => c.copy(agentdojoSecureChannel = Some(x)))
+        .text("Path to the secure output file used by AgentDojo domain facades for displaySecurely."),
     )
 
   def parseCliArgs(args: Array[String]): Option[Config] =

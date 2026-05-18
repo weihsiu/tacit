@@ -1,7 +1,7 @@
 package tacit
 package executor
 
-import core.Context
+import core.{AgentdojoDomain, Context}
 import Context.*
 
 import dotty.tools.repl.*
@@ -70,6 +70,11 @@ object ManagedRepl:
 
   /** Preamble injected before any user code so the capability API is in scope. */
   private[executor] def libraryPreamble(using Context): String =
+    ctx.config.agentdojoDomain match
+      case None                            => defaultPreamble
+      case Some(AgentdojoDomain.Workspace) => workspacePreamble
+
+  private def defaultPreamble(using Context): String =
     val jsonStr = ctx.config.libraryConfig.noSpaces
       .replace("\\", "\\\\")
       .replace("\"", "\\\"")
@@ -78,6 +83,21 @@ object ManagedRepl:
         |import caps.*
         |object api extends InterfaceImpl("$jsonStr")
         |import api.*
+        |""".stripMargin
+
+  private def workspacePreamble(using Context): String =
+    val port = ctx.config.agentdojoPort.getOrElse(
+      throw IllegalStateException("--agentdojo-port is required when --agentdojo-domain is set")
+    )
+    val secureChannel = ctx.config.agentdojoSecureChannel.getOrElse(
+      throw IllegalStateException("--agentdojo-secure-channel is required when --agentdojo-domain=workspace")
+    )
+    val escapedChannel = secureChannel.replace("\\", "\\\\").replace("\"", "\\\"")
+    s"""|import tacit.library.*
+        |import tacit.library.workspace.*
+        |import caps.*
+        |val workspace: WorkspaceService = new WorkspaceImpl("http://127.0.0.1:$port/mcp", "$escapedChannel")
+        |import workspace.*
         |""".stripMargin
 
   // We need a separate preamble for REPL, so the first repl object will be pure.
