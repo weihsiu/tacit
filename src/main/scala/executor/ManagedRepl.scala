@@ -73,6 +73,7 @@ object ManagedRepl:
     ctx.config.agentdojoDomain match
       case None                            => defaultPreamble
       case Some(AgentdojoDomain.Workspace) => workspacePreamble
+      case Some(AgentdojoDomain.Slack)     => slackPreamble
 
   private def defaultPreamble(using Context): String =
     val jsonStr = ctx.config.libraryConfig.noSpaces
@@ -86,27 +87,41 @@ object ManagedRepl:
         |""".stripMargin
 
   private def workspacePreamble(using Context): String =
+    domainPreamble("tacit.library.workspace.*", "WorkspaceService", "WorkspaceImpl")
+
+  private def slackPreamble(using Context): String =
+    domainPreamble("tacit.library.slack.*", "SlackService", "SlackImpl")
+
+  /** Shared preamble for AgentDojo domain facades: resolves the MCP port, secure
+   *  channel, and LLM provider/model from the config, then binds the domain
+   *  service so its members are in scope for the agent's code.
+   */
+  private def domainPreamble(
+      domainImport: String,
+      serviceType: String,
+      implType: String
+  )(using Context): String =
     val port = ctx.config.agentdojoPort.getOrElse(
       throw IllegalStateException("--agentdojo-port is required when --agentdojo-domain is set")
     )
     val secureChannel = ctx.config.agentdojoSecureChannel.getOrElse(
-      throw IllegalStateException("--agentdojo-secure-channel is required when --agentdojo-domain=workspace")
+      throw IllegalStateException("--agentdojo-secure-channel is required when --agentdojo-domain is set")
     )
     val llm = ctx.config.libraryConfig.hcursor.downField("llm")
     val providerName = llm.get[String]("provider").toOption.filter(_.nonEmpty).getOrElse(
-      throw IllegalStateException("--llm-provider-name is required when --agentdojo-domain=workspace")
+      throw IllegalStateException("--llm-provider-name is required when --agentdojo-domain is set")
     )
     val modelName = llm.get[String]("model").toOption.filter(_.nonEmpty).getOrElse(
-      throw IllegalStateException("--llm-model is required when --agentdojo-domain=workspace")
+      throw IllegalStateException("--llm-model is required when --agentdojo-domain is set")
     )
     def escape(s: String): String = s.replace("\\", "\\\\").replace("\"", "\\\"")
     val escapedChannel = escape(secureChannel)
     val escapedProvider = escape(providerName)
     val escapedModel = escape(modelName)
     s"""|import tacit.library.*
-        |import tacit.library.workspace.*
+        |import $domainImport
         |import caps.*
-        |val service: WorkspaceService = new WorkspaceImpl("http://127.0.0.1:$port/mcp", "$escapedChannel", "$escapedProvider", "$escapedModel")
+        |val service: $serviceType = new $implType("http://127.0.0.1:$port/mcp", "$escapedChannel", "$escapedProvider", "$escapedModel")
         |import service.*
         |""".stripMargin
 

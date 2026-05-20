@@ -16,5 +16,21 @@ class ScalaExecutorAgentdojoSuite extends munit.FunSuite:
 
     val preamble = ManagedRepl.libraryPreamble
     assert(preamble.contains("import tacit.library.workspace.*"))
-    assert(preamble.contains("""val workspace: WorkspaceService = new WorkspaceImpl("http://127.0.0.1:50718/mcp", "/tmp/tacit-workspace-secure.txt", "openrouter", "anthropic/claude-sonnet-4-6")"""))
-    assert(preamble.contains("import workspace.*"))
+    assert(preamble.contains("""val service: WorkspaceService = new WorkspaceImpl("http://127.0.0.1:50718/mcp", "/tmp/tacit-workspace-secure.txt", "openrouter", "anthropic/claude-sonnet-4-6")"""))
+    assert(preamble.contains("import service.*"))
+
+  test("slack agentdojo preamble is available"):
+    given Context = Context(
+      Config(
+        agentdojoPort = Some(50212),
+        agentdojoDomain = Some(AgentdojoDomain.Slack),
+        agentdojoSecureChannel = Some("/tmp/tacit-slack-secure.txt")
+      ).withLlm("provider", "openrouter")
+       .withLlm("model", "anthropic/claude-sonnet-4-6"),
+      None
+    )
+
+    val preamble = ManagedRepl.libraryPreamble
+    assert(preamble.contains("import tacit.library.slack.*"))
+    assert(preamble.contains("""val service: SlackService = new SlackImpl("http://127.0.0.1:50212/mcp", "/tmp/tacit-slack-secure.txt", "openrouter", "anthropic/claude-sonnet-4-6")"""))
+    assert(preamble.contains("import service.*"))

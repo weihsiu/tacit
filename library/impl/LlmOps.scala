@@ -24,6 +24,13 @@ object AgentInterface:
     examples = """`getUnreadEmails()`, `sendEmail(...)`, `agent[T]("...")`"""
   )
 
+  /** The Slack (channels/messages/web) capability surface. */
+  val Slack: AgentInterface = AgentInterface(
+    resource = "/tacit/SlackInterface.scala.txt",
+    traitName = "SlackService",
+    examples = """`getChannels()`, `sendChannelMessage(...)`, `agent[T]("...")`"""
+  )
+
 class LlmOps(
     config: Option[LlmConfig],
     interface: AgentInterface = AgentInterface()
