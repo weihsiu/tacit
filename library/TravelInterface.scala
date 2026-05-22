@@ -116,7 +116,7 @@ trait TravelService:
       bindings: Array[Eval.Binding] = Array.empty[Eval.Binding],
       expectedType: String = "",
       enclosingSource: String = "",
-      maxAttempts: Int = 3
+      maxAttempts: Int = 10
   ): T
 
   def displaySecurely(x: Classified[String]): Unit

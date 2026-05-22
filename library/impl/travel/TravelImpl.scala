@@ -216,7 +216,7 @@ class TravelImpl(
       bindings: Array[Eval.Binding] = Array.empty[Eval.Binding],
       expectedType: String = "",
       enclosingSource: String = "",
-      maxAttempts: Int = 3
+      maxAttempts: Int = 10
   ): T =
     llmOps.agent[T](prompt, bindings, expectedType, enclosingSource, maxAttempts)
 
