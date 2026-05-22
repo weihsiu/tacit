@@ -17,7 +17,8 @@ class TravelImpl(
     endpoint: String,
     secureOutputPath: String,
     llmProviderName: String,
-    llmName: String
+    llmName: String,
+    agentGuidance: String = ""
 ) extends TravelService, AutoCloseable:
   private val client = MCPClient(endpoint)
 
@@ -208,7 +209,7 @@ class TravelImpl(
   private lazy val llmOps: LlmOps =
     LlmOps(
       Some(LlmProvider.resolve(llmProviderName, llmName)),
-      AgentInterface.Travel
+      AgentInterface.Travel.copy(guidance = agentGuidance)
     )
 
   @evalLike def agent[T](

@@ -16,7 +16,8 @@ class BankingImpl(
     endpoint: String,
     secureOutputPath: String,
     llmProviderName: String,
-    llmName: String
+    llmName: String,
+    agentGuidance: String = ""
 ) extends BankingService, AutoCloseable:
   private val client = MCPClient(endpoint)
 
@@ -112,7 +113,7 @@ class BankingImpl(
   private lazy val llmOps: LlmOps =
     LlmOps(
       Some(LlmProvider.resolve(llmProviderName, llmName)),
-      AgentInterface.Banking
+      AgentInterface.Banking.copy(guidance = agentGuidance)
     )
 
   @evalLike def agent[T](

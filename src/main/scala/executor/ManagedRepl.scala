@@ -122,14 +122,23 @@ object ManagedRepl:
     val modelName = llm.get[String]("model").toOption.filter(_.nonEmpty).getOrElse(
       throw IllegalStateException("--llm-model is required when --agentdojo-domain is set")
     )
-    def escape(s: String): String = s.replace("\\", "\\\\").replace("\"", "\\\"")
+    // Escape for embedding inside a single-line Scala double-quoted string
+    // literal in the generated preamble: backslashes/quotes, plus the control
+    // chars that would otherwise break the literal (the guidance is multi-line).
+    def escape(s: String): String =
+      s.replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
     val escapedChannel = escape(secureChannel)
     val escapedProvider = escape(providerName)
     val escapedModel = escape(modelName)
+    val escapedGuidance = escape(ctx.config.agentGuidance.getOrElse(""))
     s"""|import tacit.library.*
         |import $domainImport
         |import caps.*
-        |val service: $serviceType = new $implType("http://127.0.0.1:$port/mcp", "$escapedChannel", "$escapedProvider", "$escapedModel")
+        |val service: $serviceType = new $implType("http://127.0.0.1:$port/mcp", "$escapedChannel", "$escapedProvider", "$escapedModel", "$escapedGuidance")
         |import service.*
         |""".stripMargin
 

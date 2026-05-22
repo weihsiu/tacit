@@ -13,7 +13,10 @@ import dotty.tools.repl.eval.{Eval, EvalContext, EvalResult, evalLike}
 case class AgentInterface(
     resource: String = "/tacit/Interface.scala.txt",
     traitName: String = "Interface",
-    examples: String = """`chat("...")`, `requestFileSystem(...)`"""
+    examples: String = """`chat("...")`, `requestFileSystem(...)`""",
+    /** Domain rules/gotchas spliced into the synthesis prompt. Composed by the
+     *  caller (AgentDojo) and forwarded via `--agent-guidance`; empty by default. */
+    guidance: String = ""
 )
 
 object AgentInterface:
@@ -99,6 +102,7 @@ class LlmOps(
     def attempt(n: Int, prevCode: String, prevErrors: List[String]): EvalResult[T] =
       val request = AgentPrompt.build(
         interface, interfaceReference, prompt, bindings, expectedType, enclosingSource, prevCode, prevErrors)
+      AgentPrompt.dumpPrompt(request, n)
       val code = AgentPrompt.stripCodeFences(chat(request)).trim
       val r = Eval.evalSafe[T](code, bindings, expectedType, enclosingSource)
       if r.isSuccess || n >= maxAttempts then r
@@ -150,6 +154,7 @@ private object AgentPrompt:
     List(
       Intro,
       interfaceSection(interface, interfaceReference),
+      guidanceSection(interface),
       typeSection(expectedType),
       contextSection(enclosingSource),
       bindingsSection(bindings),
@@ -157,6 +162,9 @@ private object AgentPrompt:
       typeReminder(expectedType),
       errorSection(prevCode, prevErrors)
     ).filter(_.nonEmpty).mkString("\n\n")
+
+  private def guidanceSection(interface: AgentInterface): String =
+    interface.guidance.trim
 
   private def typeSection(expectedType: String): String =
     if expectedType.nonEmpty then
@@ -191,9 +199,27 @@ private object AgentPrompt:
          |${prevErrors.mkString("\n")}
          |
          |Either fix the cause and emit a corrected expression, or — if the
-         |failure looks unrecoverable — emit code that throws a descriptive
-         |exception so the human user sees a clear cause. Output ONLY the
-         |expression.""".stripMargin
+         |failure looks unrecoverable — emit an expression that EVALUATES to a
+         |descriptive sentinel value of the required type (e.g. a `String`
+         |describing the problem). Do NOT throw inside classified: an exception thrown inside a
+         |classified context is redacted, leaving the user an empty result with
+         |no message. Output ONLY the expression.""".stripMargin
+
+  /** Opt-in diagnostic: when `TACIT_DUMP_AGENT_PROMPT` is set, write the full
+   *  synthesis prompt sent to the trusted model to `log/eval/agent_*_prompt.txt`
+   *  (relative to the process cwd). Best-effort; never disrupts evaluation. */
+  private lazy val dumpEnabled: Boolean =
+    sys.env.get("TACIT_DUMP_AGENT_PROMPT").exists(_.nonEmpty)
+
+  def dumpPrompt(request: String, attempt: Int): Unit =
+    if dumpEnabled then
+      try
+        val dir = java.nio.file.Path.of("log", "eval").nn
+        java.nio.file.Files.createDirectories(dir)
+        val name = s"agent_${System.currentTimeMillis()}_${System.nanoTime()}_attempt${attempt}_prompt.txt"
+        java.nio.file.Files.writeString(dir.resolve(name).nn, request)
+        ()
+      catch case _: Throwable => ()
 
   /** Strip ``` ... ``` fences around an LLM response if present. */
   def stripCodeFences(s: String): String =

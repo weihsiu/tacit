@@ -37,6 +37,7 @@ case class Config(
   agentdojoPort: Option[Int] = None,
   agentdojoDomain: Option[AgentdojoDomain] = None,
   agentdojoSecureChannel: Option[String] = None,
+  agentGuidance: Option[String] = None,
 ):
   def withLibrary(key: String, value: Json): Config =
     copy(libraryConfig = libraryConfig.deepMerge(Json.obj(key -> value)))
@@ -55,6 +56,7 @@ private case class FileConfig(
   agentdojoPort: Option[Int] = None,
   agentdojoDomain: Option[AgentdojoDomain] = None,
   agentdojoSecureChannel: Option[String] = None,
+  agentGuidance: Option[String] = None,
 ) derives Decoder
 
 object Config:
@@ -86,6 +88,7 @@ object Config:
       agentdojoPort = base.agentdojoPort.orElse(fc.agentdojoPort),
       agentdojoDomain = base.agentdojoDomain.orElse(fc.agentdojoDomain),
       agentdojoSecureChannel = base.agentdojoSecureChannel.orElse(fc.agentdojoSecureChannel),
+      agentGuidance = base.agentGuidance.orElse(fc.agentGuidance),
     )
 
   private def validateLlmConfig(config: Config): Config =
@@ -164,6 +167,9 @@ object Config:
       opt[String]("agentdojo-secure-channel")
         .action((x, c) => c.copy(agentdojoSecureChannel = Some(x)))
         .text("Path to the secure output file used by AgentDojo domain facades for displaySecurely."),
+      opt[String]("agent-guidance")
+        .action((x, c) => c.copy(agentGuidance = Some(x)))
+        .text("Domain rules/gotchas spliced into the trusted `agent[T]` synthesis prompt (composed by AgentDojo)."),
     )
 
   def parseCliArgs(args: Array[String]): Option[Config] =

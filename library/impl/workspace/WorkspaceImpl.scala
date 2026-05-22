@@ -16,7 +16,8 @@ class WorkspaceImpl(
     endpoint: String,
     secureOutputPath: String,
     llmProviderName: String,
-    llmName: String
+    llmName: String,
+    agentGuidance: String = ""
 ) extends WorkspaceService, AutoCloseable:
   private val client = MCPClient(endpoint)
 
@@ -202,7 +203,7 @@ class WorkspaceImpl(
   private lazy val llmOps: LlmOps =
     LlmOps(
       Some(LlmProvider.resolve(llmProviderName, llmName)),
-      AgentInterface.Workspace
+      AgentInterface.Workspace.copy(guidance = agentGuidance)
     )
 
   @evalLike def agent[T](
