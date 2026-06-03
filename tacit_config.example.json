@@ -1,0 +1,17 @@
+{
+  "recordPath": "./log",
+  "quiet": true,
+  "sessionEnabled": true,
+  "safeMode": true,
+  "libraryConfig": {
+    "commandPermissions": ["sbt", "scala", "javac", "java", "make"],
+    "networkPermissions": ["*.scala-lang.org", "github.com", "docs.oracle.com"],
+    "classifiedPaths": [".ssh", ".env", ".env.*", "secrets", "src"],
+    "secureOutput": "./log/secure.log",
+    "llm": {
+      "baseUrl": "https://api.example.com",
+      "apiKey": "sk-...",
+      "model": "gpt-..."
+    }
+  }
+}
