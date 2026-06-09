@@ -15,7 +15,10 @@ class LibrarySuite extends munit.FunSuite:
   override def beforeEach(context: BeforeEach): Unit =
     tmpDir = Files.createTempDirectory("sandbox-test")
 
-  private val interface: Interface^{} = new InterfaceImpl("{}") {
+  // allowedRoots "/" opts out of the default working-directory bound; these
+  // tests operate on per-test temp dirs, not on the bound itself (which has its
+  // own dedicated tests below).
+  private val interface: Interface^{} = new InterfaceImpl("""{"allowedRoots": ["/"]}""") {
     override def createFS(root: String, filter: String -> Boolean, classifiedPatterns: Set[String]): FileSystem =
       new RealFileSystem(root, filter, classifiedPatterns)
   }.unsafeAssumePure
@@ -190,7 +193,7 @@ class LibrarySuite extends munit.FunSuite:
     val secretDir = tmpDir.resolve("secret")
     Files.createDirectories(secretDir)
     val classifiedInterface: Interface^ = new InterfaceImpl(
-      """{"strictMode": false, "classifiedPaths": ["secret"]}"""
+      """{"strictMode": false, "classifiedPaths": ["secret"], "allowedRoots": ["/"]}"""
     ) {
       override def createFS(root: String, filter: String -> Boolean, classifiedPatterns: Set[String]): FileSystem =
         new RealFileSystem(root, filter, classifiedPatterns)
@@ -326,6 +329,96 @@ class LibrarySuite extends munit.FunSuite:
       assert(out.contains("b.txt"), s"expected b.txt in output: $out")
       assert(!out.contains("c.md"), s"c.md should be excluded by the *.txt glob: $out")
     }
+  }
+
+  // ── allowedRoots: server-configured outer bound on requestFileSystem ──
+
+  private def boundedInterface(roots: Set[String]): Interface^ =
+    new InterfaceImpl(
+      io.circe.Json.obj(
+        "strictMode" -> io.circe.Json.fromBoolean(false),
+        "allowedRoots" -> io.circe.Json.fromValues(roots.map(io.circe.Json.fromString))
+      ).noSpaces
+    ) {
+      override def createFS(root: String, filter: String -> Boolean, classifiedPatterns: Set[String]): FileSystem =
+        new RealFileSystem(root, filter, classifiedPatterns)
+    }
+
+  test("allowedRoots permits a root nested within the bound") {
+    val api = boundedInterface(Set(tmpDir.toString))
+    val sub = tmpDir.resolve("sub")
+    Files.createDirectories(sub)
+    api.requestFileSystem(sub.toString) {
+      api.access(sub.resolve("f.txt").toString).write("ok")
+    }
+  }
+
+  test("allowedRoots permits the bound root itself") {
+    val api = boundedInterface(Set(tmpDir.toString))
+    api.requestFileSystem(tmpDir.toString) {
+      api.access(tmpDir.resolve("g.txt").toString).write("ok")
+    }
+  }
+
+  test("allowedRoots denies a root outside the bound") {
+    val allowed = tmpDir.resolve("allowed")
+    Files.createDirectories(allowed)
+    val api = boundedInterface(Set(allowed.toString))
+    val ex = intercept[SecurityException] {
+      api.requestFileSystem("/etc") { api.access("/etc/hosts").read() }
+    }
+    assert(ex.getMessage.nn.contains("not within any allowed root"))
+  }
+
+  test("allowedRoots denies a sibling that merely shares a name prefix") {
+    // `/tmp/allowed-evil` must not pass a `/tmp/allowed` bound: the check is
+    // path-component-wise (startsWith on Path), not string prefix.
+    val allowed = tmpDir.resolve("allowed")
+    val evil = tmpDir.resolve("allowed-evil")
+    Files.createDirectories(allowed)
+    Files.createDirectories(evil)
+    val api = boundedInterface(Set(allowed.toString))
+    val ex = intercept[SecurityException] {
+      api.requestFileSystem(evil.toString) { api.access(evil.resolve("x").toString).write("no") }
+    }
+    assert(ex.getMessage.nn.contains("not within any allowed root"))
+  }
+
+  test("allowedRoots denies a symlink root that escapes the bound") {
+    val allowed = tmpDir.resolve("allowed")
+    Files.createDirectories(allowed)
+    val outside = Files.createTempDirectory("bound-outside")
+    try
+      // A symlink inside the allowed root that points outside it must be denied,
+      // because the bound check resolves symlinks before comparing.
+      val link = allowed.resolve("escape")
+      Files.createSymbolicLink(link, outside)
+      val api = boundedInterface(Set(allowed.toString))
+      val ex = intercept[SecurityException] {
+        api.requestFileSystem(link.toString) { api.access(link.resolve("x").toString).read() }
+      }
+      assert(ex.getMessage.nn.contains("not within any allowed root"))
+    finally
+      Files.deleteIfExists(outside)
+  }
+
+  test("no allowedRoots configured defaults to the current working directory") {
+    // With allowedRoots unset, the bound defaults to the process CWD (fail
+    // closed). A fresh interface with no allowedRoots must allow the CWD but
+    // deny a temp dir that lives outside it.
+    val api: Interface^ = new InterfaceImpl("{}") {
+      override def createFS(root: String, filter: String -> Boolean, classifiedPatterns: Set[String]): FileSystem =
+        new RealFileSystem(root, filter, classifiedPatterns)
+    }
+    val cwd = java.nio.file.Paths.get(System.getProperty("user.dir").nn)
+    assertEquals(api.requestFileSystem(cwd.toString) { 1 }, 1)   // CWD is permitted
+    // The parent of CWD is always outside the default bound, regardless of where
+    // the test runner sets the working directory.
+    val parent = cwd.getParent.nn
+    val ex = intercept[SecurityException] {
+      api.requestFileSystem(parent.toString) { api.access(parent.resolve("x").toString).read() }
+    }
+    assert(ex.getMessage.nn.contains("not within any allowed root"))
   }
 
   // --- Compile-time capability leak examples ---

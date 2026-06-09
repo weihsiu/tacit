@@ -1,6 +1,6 @@
 # TACIT: Tracked Agent Capabilities In Types
 
-**Paper:** [Tracking Capabilities for Safer Agents (arXiv:2603.00991)](https://arxiv.org/abs/2603.00991)
+**Paper:** [Securing Agents With Tracked Capabilities](https://dl.acm.org/doi/10.1145/3786335.3813127) (ACM) · [arXiv:2603.00991](https://arxiv.org/abs/2603.00991) · 🏆 **Best Paper Award at CAIS 26**
 
 TACIT (Tracked Agent Capabilities In Types) is a **safety harness** for AI agents.
 Instead of calling tools directly, agents write code in Scala 3 with [capture checking](https://nightly.scala-lang.org/docs/reference/experimental/capture-checking/index.html): a type system that statically tracks capabilities and enforces that agent code cannot forge access rights, cannot perform effects beyond its budget, and cannot leak information from pure sub-computations.
@@ -329,7 +329,8 @@ Configuration is split into **server config** (transport, recording, sessions) a
 | `-r`/`--record <dir>` | Log every execution to disk |
 | `-q`/`--quiet` | Suppress startup banner and request/response logging |
 | `--no-session` | Disable session-related tools |
-| `--safe-mode` | Enable Scala 3's `language.experimental.safe` in the REPL for every execution (see [Safe Mode](#safe-mode)) |
+| `--safe-mode` / `--no-safe-mode` | Enable/disable Scala 3's `language.experimental.safe` in the REPL for every execution (default: on; see [Safe Mode](#safe-mode)) |
+| `--exec-timeout-ms <ms>` | Wall-clock timeout for a single REPL evaluation (default: none; see [Execution Timeout](#execution-timeout)) |
 | `-c`/`--config <path>` | JSON config file (flags after `--config` override file values) |
 
 **Library flags** (shorthand for some `libraryConfig` fields):
@@ -339,6 +340,7 @@ Configuration is split into **server config** (transport, recording, sessions) a
 | `-s`/`--strict` | Block a built-in list of file-op commands (cat, ls, rm, ...) through exec. Convenient for quick experiments; for real deployments prefer `--command-permissions`. |
 | `--command-permissions <patterns>` | Comma-separated glob patterns of exec-able commands (e.g. `echo,py*,ls`). Only `*` is interpreted as a wildcard. When set, `--strict` is ignored. |
 | `--network-permissions <patterns>` | Comma-separated glob patterns of reachable hosts (e.g. `*.example.com,api.github.com`). Only `*` is interpreted as a wildcard. |
+| `--allowed-roots <paths>` | Comma-separated outer bound on `requestFileSystem` roots (e.g. `/home/me/project,/tmp`). A requested root must resolve to a path within one of these. Defaults to the server's working directory when unset. |
 | `--classified-paths <patterns>` | Comma-separated classified path patterns (gitignore-style, see below) |
 | `--llm-base-url <url>` | LLM API base URL |
 | `--llm-api-key <key>` | LLM API key |
@@ -352,10 +354,12 @@ Configuration is split into **server config** (transport, recording, sessions) a
   "quiet": true,
   "sessionEnabled": true,
   "safeMode": true,
+  "executionTimeoutMs": 60000,
   "libraryJarPath": "/path/to/TACIT-library.jar",
   "libraryConfig": {
     "commandPermissions": ["sbt", "scala", "javac", "java", "make"],
     "networkPermissions": ["*.scala-lang.org", "github.com", "docs.oracle.com"],
+    "allowedRoots": ["/home/user/project", "/tmp"],
     "classifiedPaths": [".ssh", ".env", ".env.*", "secrets"],
     "secureOutput": "/tmp/secure.log",
     "llm": {
@@ -367,25 +371,34 @@ Configuration is split into **server config** (transport, recording, sessions) a
 }
 ```
 
-**`commandPermissions`** (optional) — the exec allowlist: a list
+**`commandPermissions`** (optional). The exec allowlist: a list
 of glob patterns (only `*` is a wildcard) that every command passed to `exec`
 must match. This sits on top of the per-scope set declared by
-`requestExecPermission(...)` — a command must be in both to actually run. When
+`requestExecPermission(...)`; a command must be in both to actually run. When
 set, `strictMode` is ignored. In real deployments you should always configure
 this list explicitly.
 
-**`strictMode`** (optional, default `true`) — a quick-experiment default that
+**`strictMode`** (optional, default `true`). A quick-experiment default that
 blocks a built-in list of file-op commands (`cat`, `ls`, `rm`, `tar`, `chmod`,
 shells, ...) through `exec`. Convenient when you just want to try things out,
-but too coarse for real use — prefer `commandPermissions`.
+but too coarse for real use; prefer `commandPermissions`.
 
-**`networkPermissions`** (optional) — the network allowlist: a
+**`networkPermissions`** (optional). The network allowlist: a
 list of glob patterns (only `*` is a wildcard) that every host reached via
-`httpGet`/`httpPost` must match. Like `commandPermissions`, this layers on
-top of the per-scope set declared by `requestNetwork(...)` — a host must be
-in both. When unset, only the per-scope `requestNetwork` allowlist applies.
+`httpGet`/`httpPost`/`httpRequest` must match. Like `commandPermissions`, this
+layers on top of the per-scope set declared by `requestNetwork(...)`; a host
+must be in both. When unset, only the per-scope `requestNetwork` allowlist
+applies.
 
-**`secureOutput`** (optional) — path to an append-only file that mirrors every
+**`allowedRoots`** (optional). The file-system outer bound: a list of paths
+that confine where `requestFileSystem(root)` may operate. A requested root must
+resolve (symlinks included) to a path equal to or nested under one of these, or
+access is denied. When unset, it defaults to the server's **current working
+directory**, so the sandbox is confined to that subtree (fail closed). Set it
+explicitly to widen or relocate the bound. Classified-path masking still applies
+within whatever root is granted.
+
+**`secureOutput`** (optional). Path to an append-only file that mirrors every
 `println`/`print`/`printf` call from the isolation, but with `Classified[_]`
 values *unwrapped*. The agent's main output still shows the masked form
 (`Classified(***)`), so only whoever can read this file sees the real content.
@@ -466,8 +479,19 @@ requestExecPermission(Set("ls", "cat")) {
 requestNetwork(Set("api.example.com")) {
   val body = httpGet("https://api.example.com/data")
   httpPost("https://api.example.com/submit", """{"key":"value"}""")
+  // Arbitrary verbs with a status code:
+  val resp = httpRequest("DELETE", "https://api.example.com/item/42")  // resp.status, resp.body
 }
 ```
+
+The network methods also take plain `headers: Map[String, String]` and
+`secretHeaders: Map[String, Classified[String]]`. A `secretHeaders` value (e.g.
+an `Authorization` token read via `readClassified`) is sent to the allowlisted
+host but is **never** observable to agent code, which lets an agent authenticate
+to an allowed API with a secret it cannot otherwise read. `httpPostClassified`
+completes the picture: it POSTs a `Classified[String]` body and returns a
+`Classified[String]` response, so sensitive data can round-trip through an
+external service while staying under information-flow control (see below).
 
 ### Information Flow Control via `Classified`
 
@@ -512,6 +536,29 @@ requestFileSystem("/project") {
 }
 ```
 
+Besides the trusted LLM and classified files, a `Classified` value may also flow
+out to an **allowlisted network host** without being declassified, either as a
+secret request header (e.g. authenticating to an allowed API) or as a classified
+POST body whose response stays wrapped:
+
+```scala
+requestNetwork(Set("api.example.com")) {
+  requestFileSystem("/project") {
+    val key = readClassified("secrets/api.key")
+
+    // OK: the token reaches the allowlisted host as a header, but is never
+    // observable to agent code (the value cannot be printed or inspected).
+    val me = httpGet("https://api.example.com/me",
+                     secretHeaders = Map("Authorization" -> key.map("Bearer " + _)))
+
+    // OK: secret body in, Classified response out.
+    val payload = readClassified("secrets/report.json")
+    val reply = httpPostClassified("https://api.example.com/process", payload)
+    // reply: Classified[String]
+  }
+}
+```
+
 ### Safe Mode
 
 Agent-generated code is compiled under Scala 3's *safe mode* (`import language.experimental.safe`), which enforces a capability-safe language subset:
@@ -526,6 +573,20 @@ Agent-generated code is compiled under Scala 3's *safe mode* (`import language.e
 These restrictions prevent agents from "forgetting" capabilities through unsafe casts, reflection, or type system holes. Code that does not pass compilation is never executed.
 
 Safe mode is an experimental feature still under active development. By default, TACIT uses a static code validator that checks for forbidden patterns to enforce the safe mode subset. The `--safe-mode` flag (or `"safeMode": true` in the JSON config) additionally imports `language.experimental.safe` into every REPL execution, opting into Scala 3's in-compiler enforcement.
+
+### Execution Timeout
+
+`--exec-timeout-ms <ms>` (or `"executionTimeoutMs"` in the JSON config) bounds the
+wall-clock time of a single REPL evaluation. On timeout the client receives a
+prompt error instead of hanging, and for stateful sessions the session keeps
+its prior state, so the abandoned statement has no observable effect.
+
+The watchdog runs each evaluation on a worker thread and is **best-effort**:
+interrupt-responsive work (blocking I/O, sleeps, most library calls) is reliably
+bounded, but a pure CPU loop that never checks for interruption keeps running in
+the background and continues to hold the REPL's output lock. Hard preemption
+would require process-level isolation; this knob is a robustness guard, not a
+sandbox boundary. When unset (the default), evaluations run without a timeout.
 
 ### LLM Integration
 
@@ -547,7 +608,7 @@ Configure via CLI flags (`--llm-base-url`, `--llm-api-key`, `--llm-model`) or a 
 
 ## Experimental Results
 
-We evaluate TACIT on safety and expressiveness (see [paper](https://arxiv.org/abs/2603.00991) Section 4 for full details).
+We evaluate TACIT on safety and expressiveness (see the [paper](https://dl.acm.org/doi/10.1145/3786335.3813127) Section 4 for full details).
 
 **Safety (RQ1).** In *classified* mode (secrets wrapped in `Classified[String]`), both Claude Sonnet 4.6 and MiniMax M2.5 achieve **100% security** across all 131 trials. Every injection and malicious task is blocked by the type system. Utility remains high (99.2% for Sonnet, 90.0% for MiniMax).
 
@@ -568,7 +629,7 @@ library/
 │   ├── BaseFileSystem.scala    # Shared path validation and gitignore-style classified-path matching
 │   ├── FileOps.scala           # grep, grepRecursive, find
 │   ├── ProcessOps.scala        # exec, execOutput
-│   ├── WebOps.scala            # httpGet, httpPost
+│   ├── WebOps.scala            # httpGet, httpPost, httpRequest, httpPostClassified
 │   ├── LlmOps.scala            # chat
 │   ├── RealFileSystem.scala    # FileSystem on real disk
 │   ├── VirtualFileSystem.scala # In-memory FileSystem (for testing)
@@ -663,7 +724,7 @@ lazy val lib = project
   .settings(
     // ... existing settings ...
     libraryDependencies ++= Seq(
-      "com.openai" % "openai-java" % "4.23.0",
+      "com.openai" % "openai-java" % "4.38.0",
       "org.postgresql" % "postgresql" % "42.7.3",  // ← add your dep
     ),
   )
@@ -706,7 +767,7 @@ sbt "devRepl --strict --config my.json"      # with flags
 
 - **Server depends on library types at compile time.** The server depends on the interface type to run the REPL. Make sure your change is compatible with the server's expected interface.
 
-- **Test your API at the library level first.** The `library/test/` directory contains library-level tests using MUnit. Test your new operations there before doing integration tests through the MCP server. See `LibrarySuite.test.scala` for examples.
+- **Test your API at the library level first.** The `library/test/` directory contains library-level tests using MUnit, run with `scala-cli test library` (they are **not** part of `sbt test`). Test your new operations there before doing integration tests through the MCP server. See `LibrarySuite.test.scala` for examples.
 
 ## Development
 
@@ -717,12 +778,16 @@ Requirements:
 ```bash
 sbt clean                      # Clean build artifacts
 sbt compile                    # Compile
-sbt test                       # Run all tests
-sbt "testOnly *McpServerSuite" # Run a single suite
+sbt test                       # Run the server test suites (src/test/scala)
+sbt "testOnly *McpServerSuite" # Run a single server suite
+scala-cli test library         # Run the library test suites (library/test)
 sbt assembly                   # Build both JARs (server + library)
 sbt "lib/assembly"             # Build library JAR only
 sbt devRepl                    # Interactive REPL for testing the library
 ```
+
+> `sbt test` runs only the server suites. The `library/test/` suites are run
+> separately with `scala-cli test library`.
 
 <details>
 <summary>Running the server directly (without an agent)</summary>
@@ -744,14 +809,17 @@ java -jar server.jar --library-jar library.jar --config config.json
 ## Citation
 
 ```bibtex
-@misc{odersky2026trackingcapabilitiessaferagents,
-  title={Tracking Capabilities for Safer Agents},
-  author={Martin Odersky and Yaoyu Zhao and Yichen Xu and Oliver Bračevac and Cao Nguyen Pham},
-  year={2026},
-  eprint={2603.00991},
-  archivePrefix={arXiv},
-  primaryClass={cs.AI},
-  url={https://arxiv.org/abs/2603.00991},
+@inbook{10.1145/3786335.3813127,
+author = {Odersky, Martin and Zhao, Yaoyu and Xu, Yichen and Bra\v{c}evac, Oliver and Pham, Cao Nguyen},
+title = {Securing Agents With Tracked Capabilities},
+year = {2026},
+isbn = {9798400724152},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3786335.3813127},
+booktitle = {Proceedings of the ACM Conference on AI and Agentic Systems},
+pages = {812–838},
+numpages = {27}
 }
 ```
 

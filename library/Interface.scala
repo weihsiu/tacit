@@ -66,6 +66,10 @@ case class GrepMatch(file: String, lineNumber: Int, line: String)
 @assumeSafe
 case class ProcessResult(exitCode: Int, stdout: String, stderr: String)
 
+/** The result of an HTTP request issued via `httpRequest`. */
+@assumeSafe
+case class HttpResponse(status: Int, body: String)
+
 // ─── Capabilities ───────────────────────────────────────────────────────────
 
 /** Capability granting access to a set of network hosts.
@@ -227,11 +231,66 @@ trait Interface:
    *  ``` */
   def requestNetwork[T](hosts: Set[String])(op: Network^ ?=> T)(using IOCapability): T
 
-  /** HTTP GET. Returns the response body. Host must be in the allowed set. */
-  def httpGet(url: String)(using net: Network): String
+  /** HTTP GET. Returns the response body. Host must be in the allowed set.
+   *
+   *  `headers` sets plain request headers. `secretHeaders` sets headers whose
+   *  values are `Classified` (e.g. an `Authorization` token): each value is
+   *  unwrapped internally and sent to the allowlisted host, but is never
+   *  observable to agent code. This lets you authenticate to an allowed API
+   *  with a secret read via `readClassified` without declassifying it.
+   *
+   *  ```
+   *  requestNetwork(Set("api.example.com")) {
+   *    val key = readClassified("/data/secrets/api.key")
+   *    val body = httpGet("https://api.example.com/me",
+   *                       secretHeaders = Map("Authorization" -> key.map("Bearer " + _)))
+   *  }
+   *  ``` */
+  def httpGet(
+    url: String,
+    headers: Map[String, String] = Map.empty,
+    secretHeaders: Map[String, Classified[String]] = Map.empty
+  )(using net: Network): String
 
-  /** HTTP POST with `body`. Returns the response body. */
-  def httpPost(url: String, body: String, contentType: String = "application/json")(using net: Network): String
+  /** HTTP POST with `body`. Returns the response body. See `httpGet` for the
+   *  `headers`/`secretHeaders` contract. */
+  def httpPost(
+    url: String,
+    body: String,
+    contentType: String = "application/json",
+    headers: Map[String, String] = Map.empty,
+    secretHeaders: Map[String, Classified[String]] = Map.empty
+  )(using net: Network): String
+
+  /** Issue an HTTP request with an arbitrary `method` (GET, PUT, DELETE, PATCH,
+   *  ...). Returns the status code alongside the body. `body` is sent only when
+   *  non-empty. See `httpGet` for the `headers`/`secretHeaders` contract. */
+  def httpRequest(
+    method: String,
+    url: String,
+    body: String = "",
+    headers: Map[String, String] = Map.empty,
+    secretHeaders: Map[String, Classified[String]] = Map.empty
+  )(using net: Network): HttpResponse
+
+  /** POST a `Classified` body to an allowlisted host and receive a `Classified`
+   *  response. The body is unwrapped internally (never observable to agent
+   *  code), sent, and the response is re-wrapped, so sensitive data can flow
+   *  through an external service while staying under information-flow control.
+   *
+   *  ```
+   *  requestNetwork(Set("api.example.com")) {
+   *    val secret = readClassified("/data/secrets/payload.json")
+   *    val reply: Classified[String] = httpPostClassified("https://api.example.com/process", secret)
+   *  }
+   *  ``` */
+  def httpPostClassified(
+    url: String,
+    body: Classified[String],
+    contentType: String = "application/json",
+    headers: Map[String, String] = Map.empty,
+    secretHeaders: Map[String, Classified[String]] = Map.empty
+  )(using net: Network): Classified[String]
 
   // ── print ─────────────────────────────────────────────────────────-
 

@@ -8,7 +8,9 @@ import java.nio.file.{Files, Path}
 
 class VirtualEnvSuite extends munit.FunSuite:
 
-  val interface: Interface^{} = new InterfaceImpl("{}") {
+  // allowedRoots "/" opts out of the default working-directory bound; these
+  // tests exercise file operations on a virtual root, not the bound itself.
+  val interface: Interface^{} = new InterfaceImpl("""{"allowedRoots": ["/"]}""") {
     override def createFS(root: String, filter: String -> Boolean, classifiedPatterns: Set[String]): FileSystem =
       new VirtualFileSystem(root, filter, classifiedPatterns = classifiedPatterns)
   }.unsafeAssumePure

@@ -15,4 +15,9 @@ private[library] final class ClassifiedImpl[+T](private val value: Try[T]) exten
 
 private[library] object ClassifiedImpl:
   def wrap[T](value: ->{any.rd} T): Classified[T] = ClassifiedImpl(Try(value).unsafeAssumePure)
+  /** Wrap an already-evaluated result. Used by impure library sinks (e.g. an
+   *  HTTP POST of classified data) that must run an effectful computation and
+   *  then re-classify its outcome. The effect happens *before* wrapping, so it
+   *  cannot go through `wrap`'s pure-function parameter. */
+  def fromTry[T](value: Try[T]): Classified[T] = ClassifiedImpl(value.unsafeAssumePure)
   def unwrap[T](c: Classified[T]): Try[T] = c.asInstanceOf[ClassifiedImpl[T]].value

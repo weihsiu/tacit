@@ -3,7 +3,11 @@ import tacit.core.{Context, Config}
 import java.nio.file.Files
 
 class LibraryIntegrationSuite extends munit.FunSuite:
-  given Context = Context(Config(), None)
+  // allowedRoots "/" opts out of the default working-directory bound: these REPL
+  // tests operate on /tmp and per-test temp dirs, not on the bound itself.
+  given Context = Context(Config(libraryConfig = io.circe.Json.obj(
+    "allowedRoots" -> io.circe.Json.arr(io.circe.Json.fromString("/"))
+  )), None)
 
   /** Helper: assert that code fails to compile in the REPL with an error matching `pattern`. */
   private def assertCompileError(code: String, pattern: String)(using loc: munit.Location): Unit =
@@ -250,7 +254,8 @@ class LibraryIntegrationSuite extends munit.FunSuite:
 
     // Configure classified paths to include secrets/
     val cfg = Config(libraryConfig = io.circe.Json.obj(
-      "classifiedPaths" -> io.circe.Json.arr(io.circe.Json.fromString(secretsDir.toString))
+      "classifiedPaths" -> io.circe.Json.arr(io.circe.Json.fromString(secretsDir.toString)),
+      "allowedRoots" -> io.circe.Json.arr(io.circe.Json.fromString("/"))
     ))
     given Context = Context(cfg, None)
 
@@ -286,7 +291,8 @@ class LibraryIntegrationSuite extends munit.FunSuite:
     val cfg = Config(libraryConfig = io.circe.Json.obj(
       "classifiedPaths" -> io.circe.Json.arr(
         io.circe.Json.fromString(s"${configDir}/*/keys")
-      )
+      ),
+      "allowedRoots" -> io.circe.Json.arr(io.circe.Json.fromString("/"))
     ))
     given Context = Context(cfg, None)
 
@@ -316,7 +322,8 @@ class LibraryIntegrationSuite extends munit.FunSuite:
 
     // Component pattern: .ssh (no slash) should match .ssh at any depth
     val cfg = Config(libraryConfig = io.circe.Json.obj(
-      "classifiedPaths" -> io.circe.Json.arr(io.circe.Json.fromString(".ssh"))
+      "classifiedPaths" -> io.circe.Json.arr(io.circe.Json.fromString(".ssh")),
+      "allowedRoots" -> io.circe.Json.arr(io.circe.Json.fromString("/"))
     ))
     given Context = Context(cfg, None)
 
@@ -343,7 +350,8 @@ class LibraryIntegrationSuite extends munit.FunSuite:
     Files.writeString(sshDir.resolve("id_rsa"), "SSH PRIVATE KEY MATERIAL")
 
     val cfg = Config(libraryConfig = io.circe.Json.obj(
-      "classifiedPaths" -> io.circe.Json.arr(io.circe.Json.fromString(".ssh"))))
+      "classifiedPaths" -> io.circe.Json.arr(io.circe.Json.fromString(".ssh")),
+      "allowedRoots" -> io.circe.Json.arr(io.circe.Json.fromString("/"))))
     given Context = Context(cfg, None)
 
     val result = ScalaExecutor.execute(s"""
@@ -496,6 +504,48 @@ class LibraryIntegrationSuite extends munit.FunSuite:
     assert(result.success, s"should compile but throw at runtime: ${result.error.getOrElse(result.output)}")
     assert(result.output.contains("SecurityException") || result.output.toLowerCase.contains("permitted pattern"),
       s"expected permissions error, got: ${result.output}")
+
+  // The next three exercise the *agent-facing* network API (headers, arbitrary
+  // verbs, Classified sink): the bodies must type-check under safe mode and
+  // capture checking. A *.example.com policy with a localhost scope makes
+  // requestNetwork reject at entry, so no real network call is made.
+  private val blockedNetCfg = Config(libraryConfig = io.circe.Json.obj(
+    "networkPermissions" -> io.circe.Json.arr(io.circe.Json.fromString("*.example.com"))
+  ))
+
+  test("httpRequest (arbitrary verb, HttpResponse) is usable by agent code via REPL"):
+    given Context = Context(blockedNetCfg, None)
+    val result = ScalaExecutor.execute("""
+      requestNetwork(Set("localhost")) {
+        val r = httpRequest("DELETE", "http://localhost/resource")
+        r.status
+      }
+    """)
+    assert(result.success, s"should compile but throw at runtime: ${result.error.getOrElse(result.output)}")
+    assert(result.output.contains("SecurityException"), s"expected permissions error, got: ${result.output}")
+
+  test("secretHeaders with a Classified token is usable by agent code via REPL"):
+    given Context = Context(blockedNetCfg, None)
+    // A Classified value flowing into a request header must type-check.
+    val result = ScalaExecutor.execute("""
+      requestNetwork(Set("localhost")) {
+        httpGet("http://localhost/secure",
+                secretHeaders = Map("Authorization" -> classify("Bearer s3cr3t")))
+      }
+    """)
+    assert(result.success, s"should compile but throw at runtime: ${result.error.getOrElse(result.output)}")
+    assert(result.output.contains("SecurityException"), s"expected permissions error, got: ${result.output}")
+
+  test("httpPostClassified is usable by agent code via REPL"):
+    given Context = Context(blockedNetCfg, None)
+    val result = ScalaExecutor.execute("""
+      requestNetwork(Set("localhost")) {
+        val reply: Classified[String] = httpPostClassified("http://localhost/x", classify("payload"))
+        reply.toString
+      }
+    """)
+    assert(result.success, s"should compile but throw at runtime: ${result.error.getOrElse(result.output)}")
+    assert(result.output.contains("SecurityException"), s"expected permissions error, got: ${result.output}")
 
   test("requestFileSystem blocks path escape via REPL"):
     val result = ScalaExecutor.execute("""

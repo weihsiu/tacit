@@ -91,6 +91,24 @@ object CodeValidator:
   private inline def isIdentChar(c: Char): Boolean = Character.isLetterOrDigit(c) || c == '_'
   private inline def isIdentStart(c: Char): Boolean = Character.isLetter(c) || c == '_'
 
+  /** Length of the Scala character literal starting at `i` (a single quote), or
+    * `0` if the quote does not begin a char literal. Recognizing these matters
+    * because a literal like `'"'` or `'}'` carries a character that would
+    * otherwise be lexed as a string opener or a brace, flipping the stripper
+    * into the wrong mode and blanking (or exposing) the real code around it.
+    * A `0` result leaves the quote to be emitted as ordinary code, so Scala 3
+    * quote syntax (`'{ ... }`, `'[ ... ]`) is unaffected. */
+  private def charLiteralLength(code: String, i: Int, len: Int): Int =
+    if code.charAt(i) != '\'' then 0
+    else if i + 1 < len && code.charAt(i + 1) == '\\' then
+      // Escaped: '\n', '\'', '\\', '\uXXXX' (and octal, treated like a 1-char escape).
+      if i + 2 < len && code.charAt(i + 2) == 'u' then
+        if i + 7 < len && code.charAt(i + 7) == '\'' then 8 else 0   // '\uXXXX'
+      else if i + 3 < len && code.charAt(i + 3) == '\'' then 4       // '\n'
+      else 0
+    else if i + 2 < len && code.charAt(i + 2) == '\'' then 3         // 'x'
+    else 0
+
   /** Strip string literals and comments, replacing their content with spaces,
     * while PRESERVING string-interpolation expressions (`${...}` and `$ident`)
     * as code.
@@ -140,7 +158,12 @@ object CodeValidator:
         else
           blank(c); i += 1                                               // literal text
       else
-        if c == '"' then
+        val charLit = if c == '\'' then charLiteralLength(code, i, len) else 0
+        if charLit > 0 then
+          var k = 0
+          while k < charLit do { blank(code.charAt(i + k)); k += 1 } // blank a char literal's content
+          i += charLit
+        else if c == '"' then
           val triple = i + 2 < len && code.charAt(i + 1) == '"' && code.charAt(i + 2) == '"'
           val interp = i > 0 && isIdentChar(code.charAt(i - 1))           // `s"`, `f"`, `raw"`, custom
           if triple then { blank('"'); blank('"'); blank('"'); i += 3 } else { blank('"'); i += 1 }

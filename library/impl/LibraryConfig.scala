@@ -6,6 +6,7 @@ import io.circe.parser.decode
 case class LibraryConfig(
   strictMode: Option[Boolean] = None,
   classifiedPaths: Option[Set[String]] = None,
+  allowedRoots: Option[Set[String]] = None,
   commandPermissions: Option[Set[String]] = None,
   networkPermissions: Option[Set[String]] = None,
   llm: Option[LlmConfig] = None,

@@ -4,6 +4,7 @@ import language.experimental.captureChecking
 import caps.*
 
 import java.io.{File => JFile, PrintStream, FileOutputStream}
+import java.nio.file.{Files, Path, Paths}
 
 @assumeSafe
 abstract class InterfaceImpl(
@@ -18,6 +19,13 @@ abstract class InterfaceImpl(
   )
   private val strictMode: Boolean = config.strictMode.getOrElse(true)
   private val classifiedPatterns: Set[String] = config.classifiedPaths.getOrElse(DefaultClassifiedPatterns)
+  /** Outer bound on file-system roots: every `requestFileSystem(root)` must
+   *  resolve to a path within one of these. When unset, it defaults to the
+   *  server's current working directory, so the sandbox is confined to that
+   *  subtree by default (fail closed) rather than allowing any root. Set it
+   *  explicitly to widen or relocate the bound. */
+  private val allowedRoots: Set[String] =
+    config.allowedRoots.getOrElse(Set(InterfaceImpl.currentWorkingDir))
   private val commandPermissions: Option[Set[String]] = config.commandPermissions
   private val networkPermissions: Option[Set[String]] = config.networkPermissions
   private val llmConfig: Option[LlmConfig] = config.llm
@@ -76,7 +84,27 @@ abstract class InterfaceImpl(
     scala.Predef.printf(fmt, args.map(maskForMain)*)
     withSecureOut(scala.Predef.printf(fmt, args.map(unwrapForSecure)*))
 
+  /** Resolves a path to the same canonical form [[RealFileSystem]] uses for its
+   *  root: absolute + normalized, then through symlinks when the path exists.
+   *  Resolving symlinks matters for the bound check below. Otherwise a symlink
+   *  *named* inside an allowed root but *pointing* outside it would pass. */
+  private def resolveRootForBound(p: String): Path =
+    val abs = Paths.get(p).toAbsolutePath.nn.normalize.nn
+    if Files.exists(abs) then abs.toRealPath().nn else abs
+
+  /** Entry-time outer-bound check for [[requestFileSystem]]: the requested root
+   *  must resolve to a path equal to, or nested under, one of `allowedRoots`
+   *  (which defaults to the current working directory). */
+  private def requireRootAllowed(root: String): Unit =
+    val resolved = resolveRootForBound(root)
+    val permitted = allowedRoots.exists(allowed => resolved.startsWith(resolveRootForBound(allowed)))
+    if !permitted then
+      throw SecurityException(
+        s"Access denied: filesystem root '$root' is not within any allowed root $allowedRoots"
+      )
+
   def requestFileSystem[T](root: String)(op: FileSystem^ ?=> T)(using IOCapability): T =
+    requireRootAllowed(root)
     val fs = createFS(root, _ => true, classifiedPatterns)
     op(using fs)
 
@@ -126,6 +154,12 @@ abstract class InterfaceImpl(
     fs.access(path).writeClassified(content)
 
 object InterfaceImpl:
+  /** The server process's current working directory, used as the default
+    * `allowedRoots` bound. Falls back to "." if the `user.dir` property is
+    * absent (it normally is not). */
+  private[library] def currentWorkingDir: String =
+    Option(System.getProperty("user.dir")).getOrElse(".")
+
   /** One append-mode `PrintStream` per secureOutput path, shared process-wide.
     * A fresh `InterfaceImpl` is built on every REPL init (and stateless
     * `execute` builds a REPL per call), so opening a new `FileOutputStream` in

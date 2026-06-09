@@ -61,7 +61,26 @@ class ConfigSuite extends munit.FunSuite:
     val cfg = parse().get
     assertEquals(cfg.libraryJarPath, jarPath)
 
+  test("--exec-timeout-ms sets executionTimeoutMs"):
+    val cfg = parse("--exec-timeout-ms", "5000").get
+    assertEquals(cfg.executionTimeoutMs, Some(5000L))
+
+  test("executionTimeoutMs defaults to None"):
+    val cfg = parseRaw().get
+    assertEquals(cfg.executionTimeoutMs, None)
+
+  test("config file sets executionTimeoutMs"):
+    withConfigFile(s"""{ "executionTimeoutMs": 12345, "libraryJarPath": "$jarPath" }""") { path =>
+      val cfg = Config.parseCliArgs(Array("--config", path))
+      assertEquals(cfg.flatMap(_.executionTimeoutMs), Some(12345L))
+    }
+
   // ── Library CLI flags ───────────────────────────────────────
+
+  test("--allowed-roots sets allowedRoots in libraryConfig"):
+    val cfg = parse("--allowed-roots", "/home/me/project, /tmp").get
+    val roots = cfg.libraryConfig.hcursor.get[List[String]]("allowedRoots").toOption
+    assertEquals(roots, Some(List("/home/me/project", "/tmp")))
 
   test("--strict sets strictMode in libraryConfig"):
     val cfg = parse("-s").get

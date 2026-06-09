@@ -76,6 +76,14 @@ class LibraryConfigSuite extends munit.FunSuite:
     val cfg = LibraryConfig.fromJson("""{"strictMode": true}""")
     assertEquals(cfg.secureOutput, None)
 
+  test("parses allowedRoots"):
+    val cfg = LibraryConfig.fromJson("""{"allowedRoots": ["/home/me/project", "/tmp"]}""")
+    assertEquals(cfg.allowedRoots, Some(Set("/home/me/project", "/tmp")))
+
+  test("allowedRoots defaults to None"):
+    val cfg = LibraryConfig.fromJson("""{"strictMode": true}""")
+    assertEquals(cfg.allowedRoots, None)
+
   test("parses commandPermissions"):
     val cfg = LibraryConfig.fromJson("""{"commandPermissions": ["echo", "sbt*"]}""")
     assertEquals(cfg.commandPermissions, Some(Set("echo", "sbt*")))

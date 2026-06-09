@@ -64,7 +64,7 @@ class ClassifiedSuite extends munit.FunSuite:
   // ── File system classified path enforcement (VirtualFileSystem) ───────
 
   val interface: Interface^{} = new InterfaceImpl(
-    """{"strictMode": false, "classifiedPaths": ["secret"]}"""
+    """{"strictMode": false, "classifiedPaths": ["secret"], "allowedRoots": ["/"]}"""
   ) {
     override def createFS(root: String, filter: String -> Boolean, classifiedPatterns: Set[String]): FileSystem =
       new VirtualFileSystem(root, filter, classifiedPatterns = classifiedPatterns)
@@ -238,7 +238,8 @@ class ClassifiedSuite extends munit.FunSuite:
     new InterfaceImpl(
       io.circe.Json.obj(
         "strictMode" -> io.circe.Json.fromBoolean(false),
-        "classifiedPaths" -> io.circe.Json.fromValues(patterns.map(io.circe.Json.fromString))
+        "classifiedPaths" -> io.circe.Json.fromValues(patterns.map(io.circe.Json.fromString)),
+        "allowedRoots" -> io.circe.Json.arr(io.circe.Json.fromString("/"))
       ).noSpaces
     ) {
       override def createFS(root: String, filter: String -> Boolean, classifiedPatterns: Set[String]): FileSystem =

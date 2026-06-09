@@ -11,6 +11,9 @@ case class Config(
   quiet: Boolean = false,
   sessionEnabled: Boolean = true,
   safeMode: Boolean = true,
+  // Wall-clock budget for a single REPL evaluation. `None` disables the
+  // watchdog (legacy behavior). See ManagedRepl for the in-process caveats.
+  executionTimeoutMs: Option[Long] = None,
   libraryJarPath: String = Option(System.getProperty("tacit.library.jar")).getOrElse(""),
   libraryConfig: Json = Json.obj(),
 ):
@@ -27,6 +30,7 @@ private case class FileConfig(
   quiet: Option[Boolean] = None,
   sessionEnabled: Option[Boolean] = None,
   safeMode: Option[Boolean] = None,
+  executionTimeoutMs: Option[Long] = None,
   libraryJarPath: Option[String] = None,
   libraryConfig: Option[Json] = None,
 ) derives Decoder
@@ -56,6 +60,7 @@ object Config:
       quiet = fc.quiet.getOrElse(base.quiet),
       sessionEnabled = fc.sessionEnabled.getOrElse(base.sessionEnabled),
       safeMode = fc.safeMode.getOrElse(base.safeMode),
+      executionTimeoutMs = fc.executionTimeoutMs.orElse(base.executionTimeoutMs),
       libraryJarPath = fc.libraryJarPath.getOrElse(base.libraryJarPath),
       libraryConfig = fc.libraryConfig.getOrElse(Json.obj()).deepMerge(base.libraryConfig),
     )
@@ -92,6 +97,9 @@ object Config:
       opt[String]("classified-paths")
         .action((x, c) => c.withLibrary("classifiedPaths", x.split(",").map(_.trim).filter(_.nonEmpty).toSeq.asJson))
         .text("Comma-separated classified path patterns ('.ssh' matches any .ssh dir, '/abs/path' matches that path)."),
+      opt[String]("allowed-roots")
+        .action((x, c) => c.withLibrary("allowedRoots", x.split(",").map(_.trim).filter(_.nonEmpty).toSeq.asJson))
+        .text("Comma-separated outer bound on requestFileSystem roots (e.g. '/home/me/project'). When set, roots outside these are denied."),
       opt[String]("command-permissions")
         .action((x, c) => c.withLibrary("commandPermissions", x.split(",").map(_.trim).filter(_.nonEmpty).toSeq.asJson))
         .text("Comma-separated glob patterns of exec-able commands (e.g. 'echo,py*'). When set, --strict is ignored."),
@@ -110,6 +118,9 @@ object Config:
       opt[Unit]("no-safe-mode")
         .action((_, c) => c.copy(safeMode = false))
         .text("Disable safe mode in the REPL."),
+      opt[Long]("exec-timeout-ms")
+        .action((x, c) => c.copy(executionTimeoutMs = Some(x)))
+        .text("Wall-clock timeout (ms) for a single REPL evaluation. Default: no timeout."),
       opt[String]("library-jar")
         .action((x, c) => c.copy(libraryJarPath = x))
         .text("Path to the library JAR (TACIT-library.jar). Required."),

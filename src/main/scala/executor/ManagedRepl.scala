@@ -173,16 +173,36 @@ class ManagedRepl(using Context):
         case other =>
           ExecutionResult(false, "", Some(s"Unexpected parse result: $other"))
 
-  /** For a [[Parsed]] we read compile-error state from its `StoreReporter`:
+  /** Dispatch a parse result, honoring the optional execution timeout. */
+  private def dispatch(res: ParseResult): ExecutionResult =
+    ctx.config.executionTimeoutMs match
+      case None        => adopt(res, evaluate(res))
+      case Some(limit) => dispatchWithTimeout(res, limit)
+
+  /** Runs `res` against the current `state` and returns the resulting state
+    * alongside captured output. Deliberately does *not* mutate `this.state`, so
+    * the caller decides whether to adopt the new state, so a timed-out run can
+    * be discarded without corrupting the session.
+    */
+  private def evaluate(res: ParseResult): (State, String, Option[Throwable]) =
+    var newState = state
+    val (output, thrown) = withOutputCapture(outputCapture, printStream):
+      newState = driver.runParseResult(res)(using state)
+    (newState, output, thrown)
+
+  /** Adopt an evaluation result as the new session state and turn it into an
+    * [[ExecutionResult]].
+    *
+    * For a [[Parsed]] we read compile-error state from its `StoreReporter`:
     * `errorCount` stays live even after the driver drains the diagnostic list
     * via `removeBufferedMessages`, so `hasErrors` is a structured signal
     * rather than a stdout heuristic. For allowlisted meta-commands (`:type`,
     * `:doc`, `:imports`) there is no reporter, so we treat dispatch as
     * successful and let any error text surface in the captured output.
     */
-  private def dispatch(res: ParseResult): ExecutionResult =
-    val (output, thrown) = withOutputCapture(outputCapture, printStream):
-      state = driver.runParseResult(res)(using state)
+  private def adopt(res: ParseResult, evaluated: (State, String, Option[Throwable])): ExecutionResult =
+    val (newState, output, thrown) = evaluated
+    state = newState
     thrown match
       case Some(e) =>
         ExecutionResult(false, output, Option(e.getMessage))
@@ -191,6 +211,31 @@ class ManagedRepl(using Context):
           case p: Parsed => p.reporter.hasErrors
           case _         => false
         ExecutionResult(!compileFailed, output)
+
+  /** Run the evaluation on a worker thread, bounding it to `limitMs`.
+    *
+    * On timeout the client gets a prompt error instead of hanging, and the
+    * session keeps its prior state (the abandoned statement has no observable
+    * effect). The interrupt is best-effort: a CPU-bound loop that never checks
+    * interruption keeps running in the background and continues to hold the
+    * process-global output lock, so this is *not* a hard sandbox; true
+    * preemption requires process isolation. It does reliably bound
+    * interrupt-responsive work (blocking I/O, sleeps, most library calls).
+    */
+  private def dispatchWithTimeout(res: ParseResult, limitMs: Long): ExecutionResult =
+    val resultRef = java.util.concurrent.atomic.AtomicReference[(State, String, Option[Throwable])]()
+    val worker = Thread(() => resultRef.set(evaluate(res)))
+    worker.setName("tacit-repl-eval")
+    worker.setDaemon(true)
+    worker.start()
+    worker.join(limitMs)
+    if worker.isAlive then
+      worker.interrupt()
+      ExecutionResult(false, "", Some(s"Execution timed out after ${limitMs}ms"))
+    else
+      resultRef.get() match
+        case null      => ExecutionResult(false, "", Some("Execution failed (no result; possible fatal error)"))
+        case evaluated => adopt(res, evaluated)
 
   private def formatDiagnostics(diags: List[Diagnostic]): String =
     diags.map: d =>

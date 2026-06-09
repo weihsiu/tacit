@@ -56,7 +56,29 @@ class CodeValidatorEvasionSuite extends munit.FunSuite:
   test("sys.runtime"):
     assert(ids("sys.runtime.halt(0)").contains("sys-scala"))
 
+  // ── Character literals: a `'"'` must not be mistaken for a string opener ──
+  // A char literal containing a quote (`'"'`), or an escaped-quote literal
+  // (`'\''`), would otherwise flip the stripper into string mode and blank the
+  // *real* code that follows, hiding a forbidden token from every pattern while
+  // the compiler still runs the original source.
+
+  test("charlit: double-quote char literal then java.io"):
+    assert(ids("""val c = '"'; java.io.File("/x")""").contains("file-io-java"))
+  test("charlit: double-quote char literal then Runtime"):
+    assert(ids("""val c = '"'; Runtime.getRuntime.exec("id")""").contains("proc-runtime"))
+  test("charlit: escaped-quote char literal then System.exit"):
+    assert(ids("""val c = '\''; System.exit(0)""").contains("sys-exit"))
+  test("charlit: brace char literal inside interpolation does not unbalance ${}"):
+    // The `'}'` inside `${...}` must be consumed as a char literal; otherwise its
+    // `}` prematurely closes the interpolation and blanks the forbidden token.
+    assert(ids("""val x = s"${ val b = '}'; java.io.File }"""").contains("file-io-java"))
+
   // ── False-positive guards: legitimate code must still pass ────────────────
+
+  test("no-fp: char literals in ordinary code"):
+    assertEquals(ids("""val sep = ','; val q = '"'; val nl = '\n'; List("a","b").mkString(sep.toString)"""), Nil)
+  test("no-fp: quote char literal does not swallow a following safe string"):
+    assertEquals(ids("""val c = '"'; val s = "java.io is just text"; s"""), Nil)
 
   test("no-fp: leading-dot method chaining"):
     assertEquals(ids("List(1,2,3)\n  .map(_ * 2)\n  .filter(_ > 2)\n  .sum"), Nil)
